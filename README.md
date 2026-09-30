@@ -24,3 +24,7 @@ Not wired in this V2 so the app remains testable immediately. The previously des
 The scan prototype now uses the device camera through `getUserMedia`, MediaPipe Pose Landmarker for real-time landmarks, frame-quality heuristics, automatic quality-gated captures, four-view capture, and IndexedDB storage for captured JPEG frames.
 
 It intentionally does NOT claim that these frames are a 3D reconstruction. The next engineering stage is multi-view calibration/reconstruction and validation against physical measurements.
+
+
+### Prototype fix
+This build uses the browser ESM version of MediaPipe Tasks Vision and does not require a global script symbol. Four-view orientation is treated as a capture protocol; the live pose gate verifies body visibility/framing/stability rather than incorrectly requiring a frontal pose for side/back views.

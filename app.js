@@ -51,19 +51,26 @@ function scan(){
 let scanRuntime=null;
 async function loadPoseModel(){
   if(window.__poseLandmarker) return window.__poseLandmarker;
-  if(!window.FilesetResolver || !window.PoseLandmarker){
-    await new Promise((resolve,reject)=>{
-      const s=document.createElement("script");
-      s.src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.js";
-      s.onload=resolve;s.onerror=reject;document.head.appendChild(s);
-    });
+  if(!window.__poseVision){
+    window.__poseVision=await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs");
   }
-  const vision=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm");
+  const {FilesetResolver,PoseLandmarker}=window.__poseVision;
+  const vision=await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+  );
   const landmarker=await PoseLandmarker.createFromOptions(vision,{
-    baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",delegate:"GPU"},
-    runningMode:"VIDEO",numPoses:1,minPoseDetectionConfidence:.55,minPosePresenceConfidence:.55,minTrackingConfidence:.55
+    baseOptions:{
+      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate:"GPU"
+    },
+    runningMode:"VIDEO",
+    numPoses:1,
+    minPoseDetectionConfidence:.55,
+    minPosePresenceConfidence:.55,
+    minTrackingConfidence:.55
   });
-  window.__poseLandmarker=landmarker; return landmarker;
+  window.__poseLandmarker=landmarker;
+  return landmarker;
 }
 function tone(type){
   try{let c=new AudioContext(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);
@@ -84,6 +91,7 @@ function openCamera(){
   </div>
   <div class="card">
     <div class="row"><b id="poseName">FRONT VIEW</b><span id="viewCount">0 / 4</span></div>
+    <p id="modelStatus" class="muted">Loading camera + pose model…</p>
     <p id="hint">Stand where your entire body fits in frame. The model will check your pose and movement.</p>
     <div class="checks" id="checks"></div>
     <button class="secondary" id="manual">Manual capture (flagged)</button>
@@ -99,13 +107,15 @@ async function startRealScan(){
     scanRuntime.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:1280},height:{ideal:720}},audio:false});
     video.srcObject=scanRuntime.stream;
     await video.play();
+    document.getElementById("modelStatus").textContent="Camera live • loading pose model…";
     const model=await loadPoseModel();
+    document.getElementById("modelStatus").textContent="Camera live • pose model active";
     document.getElementById("stopCam").onclick=stopRealScan;
     document.getElementById("manual").onclick=()=>captureView(true);
     requestAnimationFrame(()=>processCamera(model,video,overlay,ctx));
   }catch(e){
-    document.getElementById("status").textContent="CAMERA ERROR • ALLOW CAMERA ACCESS";
-    document.getElementById("hint").textContent=e.message||"Camera access is unavailable.";
+    document.getElementById("status").textContent="CAMERA / MODEL ERROR";
+    document.getElementById("hint").textContent=(e && e.message ? e.message : "Camera or pose model could not start.")+" Tap Stop camera, return to Scan, and retry. If this is an iPhone, make sure the site has camera permission and is opened over HTTPS.";
   }
 }
 function stopRealScan(){
@@ -132,14 +142,15 @@ function processCamera(model,video,canvas,ctx){
 function qualityFromLandmarks(lm,video){
   if(!lm)return {optimal:false,reason:"BODY NOT DETECTED",distance:false,pose:false,stable:false,frame:false};
   const visible=lm.filter(p=>p.visibility===undefined||p.visibility>.45);
+  if(visible.length<12)return {optimal:false,reason:"BODY NOT DETECTED",distance:false,pose:false,stable:false,frame:false};
   const xs=visible.map(p=>p.x),ys=visible.map(p=>p.y);
   const minx=Math.min(...xs),maxx=Math.max(...xs),miny=Math.min(...ys),maxy=Math.max(...ys);
-  const h=maxy-miny,w=maxx-minx;
+  const h=maxy-miny;
   const frame=minx>.04&&maxx<.96&&miny>.03&&maxy<.97;
-  const distance=h>.62&&h<.94;
-  const shoulders=lm[11]&&lm[12],hips=lm[23]&&lm[24];
-  const pose=!!shoulders&&!!hips&&(Math.abs((shoulders.x||0)-(hips.x||0))<.22);
-  return {optimal:frame&&distance&&pose,reason:!frame?"FULL BODY IN FRAME":!distance?"MOVE CLOSER / FARTHER":!pose?"FACE FRONT": "HOLD STILL",distance,pose,stable:true,frame};
+  const distance=h>.55&&h<.96;
+  const required=[11,12,23,24,25,26,27,28].every(i=>lm[i] && (lm[i].visibility===undefined||lm[i].visibility>.4));
+  const pose=required;
+  return {optimal:frame&&distance&&pose,reason:!frame?"FULL BODY IN FRAME":!distance?"MOVE CLOSER / FARTHER":!pose?"TURN / REPOSITION":"HOLD STILL",distance,pose,stable:true,frame};
 }
 function drawLandmarks(ctx,lm,video){
   if(!lm)return;ctx.fillStyle="rgba(255,255,255,.9)";
